@@ -13,7 +13,7 @@ logging.basicConfig(
     datefmt="%H:%M:%S",
 )
 
-logger = logging.getLogger('extract_pics')
+logger = logging.getLogger('extract_list')
 
 
 key_mappings = {
@@ -66,7 +66,7 @@ def get_args():
 
 def get_people(filename):
     people = []
-    with open(args.csv) as f:
+    with open(filename) as f:
         r = csv.reader(f)
         headers = None
         for row in r:
