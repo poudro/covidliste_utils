@@ -4,8 +4,14 @@ import logging
 from urllib.parse import urlparse
 import requests
 import json
+import hashlib
+import os
+import re
+from io import BytesIO
+from PIL import Image
+from resizeimage import resizeimage
+from resizeimage.imageexceptions import ImageSizeError
 from bs4 import BeautifulSoup
-
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,13 +21,14 @@ logging.basicConfig(
 
 logger = logging.getLogger('extract_list')
 
+pics_mimetypes = set(["image/png", "image/jpeg", "image/jpg", "image/gif"])
 
 key_mappings = {
     'Nom complet': 'fullname',
     'Canal #bénévoles_général': 'canal',
     'Prénom 👀': 'firstname',
     'Nom 👀': 'lastname',
-    'Identité 👀': 'id',
+    'Identité 👀': 'identity',
     'Pseudo slack (si différent du nom complet)': 'nick',
     'Adresse mail': 'email',
     'Téléphone portable (si numéro français, format français, sinon format international +32 XX...)': 'phone',
@@ -34,7 +41,7 @@ key_mappings = {
     'GitHub (pseudo seulement) 👀': 'github',
     'Linkedin (lien du profil seulement) 👀': 'linkedin',
     'Twitter (pseudo seulement) 👀': 'twitter',
-    'Autre pseudo (si vous voulez apparaitre sous un pseudo) 👀': 'other_nick',
+    'Autre pseudo (si vous voulez apparaitre sous un pseudo) 👀': 'nickname',
     'Mini bio 👀': 'bio',
     'Spécialité 👀': 'specialty',
     'Disponibilité': 'dispo',
@@ -43,8 +50,17 @@ key_mappings = {
     "Commentaire autre, si vous ne voulez pas qu'on publie un truc, si vous avez autre chose à dire": 'comment',
 }
 
-public = set([x[1] for x in filter(lambda x: '👀' in x[0], key_mappings.items())] + ['verified_pic', 'anon'])
+public = set([x[1] for x in filter(lambda x: '👀' in x[0], key_mappings.items())] + ['picture', 'anon', 'id'])
 
+default_headers = {
+   'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.5',
+    'Connection': 'keep-alive',
+    'Upgrade-Insecure-Requests': '1',
+    'Pragma': 'no-cache',
+    'Cache-Control': 'no-cache',
+}
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -55,7 +71,12 @@ def get_args():
                             required=True,
                         )
     parser.add_argument(
-                            "--out",
+                            "--out-json",
+                            type=str,
+                            required=True,
+                        )
+    parser.add_argument(
+                            "--out-pics-folder",
                             type=str,
                             required=True,
                         )
@@ -76,6 +97,9 @@ def get_people(filename):
                 break
             elif headers:
                 peep = {key_mappings[k]: v for k, v in zip(headers, row)}
+                person_id = hashlib.sha256(peep['email'].encode("utf-8")).hexdigest()
+                person_id = hashlib.md5(person_id.encode("utf-8")).hexdigest()
+                peep['id'] = person_id
                 if peep['canal'] == 'Oui':
                     people.append(peep)
 
@@ -84,7 +108,11 @@ def get_people(filename):
 
 def handle_mention(peep):
     if peep['mention'] == 'Non' or peep['mention'] == '':
-        return {'anon': True}
+        for k, v in peep.items():
+            if k not in ["id", "team",]:
+                peep[k] = ""
+        peep['anon'] = True
+        return peep
     elif peep['mention'] == 'Oui : uniquement Prénom + 1ère lettre du Nom':
         peep['lastname'] = peep['lastname'][0]
     elif peep['mention'] == 'Oui : uniquement Prénom':
@@ -108,8 +136,6 @@ def verify_pic(peep):
     if not src:
         return None
 
-    mimetypes = set(["image/png", "image/jpeg", "image/jpg", "image/gif"])
-
     up = urlparse(src)
     if not up.netloc:
         return None
@@ -117,8 +143,8 @@ def verify_pic(peep):
     if 'zupimages.net' in up.netloc and 'viewer.php' in up.path:
         src = 'https://www.zupimages.net/up/%s' % up.query.replace('id=', '')
 
-    r = requests.head(src)
-    if r.status_code >= 200 and r.status_code <= 209 and r.headers["content-type"] in mimetypes:
+    r = requests.get(src, headers=default_headers)
+    if r.status_code >= 200 and r.status_code <= 209 and r.headers["content-type"] in pics_mimetypes:
         return src
     else:
         logger.warning(f"{peep['firstname']} {peep['lastname']} -> picture url does not point to a valid picture {src}")
@@ -128,7 +154,7 @@ def verify_pic(peep):
 
 def get_github_pic(peep):
     handle = peep['github']
-    r = requests.get(f'https://github.com/{handle}')
+    r = requests.get(f'https://github.com/{handle}', headers=default_headers)
     if r.status_code == 200:
         soup = BeautifulSoup(r.text, 'lxml')
         img = soup.select('img.avatar-user.width-full')
@@ -138,51 +164,66 @@ def get_github_pic(peep):
     return None
 
 
-# def get_twitter_pic(peep):
-#     handle = peep['twitter']
-#     r = requests.get(f'https://twitter.com/{handle}/photo')
-#     if r.status_code == 200:
-#         soup = BeautifulSoup(r.text, 'lxml')
-#     return None
-
-
-def get_pic(peep):
-    priority = ['pic', 'github', 'twitter', 'linkedin']
-    for field in priority:
-        if peep[field]:
-            if field == 'pic':
-                src = verify_pic(peep)
-            elif field == 'github':
-                src = get_github_pic(peep)
-            # elif field == 'twitter':
-            #     src = get_twitter_pic(peep)
-
-            if src:
-                return src
-
+def get_twitter_pic(peep):
+    handle = peep['twitter']
+    # no way to retreive it by scrapping now, we must use https://developer.twitter.com/en/docs/twitter-api/v1/accounts-and-users/user-profile-images-and-banners
     return None
 
 
-def to_json(people, json_file):
+def get_pic(peep, pics_folder):
+    priority = ['pic', 'github', 'twitter', 'linkedin']
+    for field in priority:
+        if peep[field]:
+            pic_name = None
+            if field == 'pic':
+                pic_name = download_and_crop_pic(peep, verify_pic(peep), pics_folder)
+            elif field == 'github':
+                pic_name = download_and_crop_pic(peep, get_github_pic(peep), pics_folder)
+            elif field == 'twitter':
+                pic_name = download_and_crop_pic(peep, get_twitter_pic(peep), pics_folder)
+
+            if pic_name:
+                return pic_name
+
+    return None
+
+def download_and_crop_pic(peep, pic_url, pics_folder):
+  if not pic_url:
+    return None
+  image_name = "volunteer-" + peep['id']
+  r = requests.get(pic_url, headers=default_headers)
+  if r.status_code >= 200 and r.status_code <= 209 and r.headers["content-type"] in pics_mimetypes:
+    with Image.open(BytesIO(r.content)) as image:
+        image = image.convert('RGB')
+        try:
+          cover = resizeimage.resize_cover(image, [200, 200])
+          cover.save(pics_folder + os.path.sep + image_name + '.jpg', image.format)
+          return image_name+'.jpg'
+        except ImageSizeError as e:
+          logger.warning(f"{peep['firstname']} {peep['lastname']} -> picture cannot be cropped : {e.message} - {pic_url}")
+
+def to_json(people, json_file, pics_folder):
     out = []
     for peep in people:
         peep = handle_mention(peep)
 
         if peep:
+            if peep['linkedin']:
+                peep['linkedin'] = re.sub(r'(https?://)?www\.linkedin\.com/', 'https://www.linkedin.com/', peep['linkedin'])
             if not peep['anon']:
-                pic = get_pic(peep)
-                if pic:
-                    peep['verified_pic'] = pic
-                else:
-                    peep['verified_pic'] = ''
+                peep['picture'] = ''
+                pic_name = get_pic(peep, pics_folder)
+                if pic_name:
+                  peep['picture'] = pic_name
 
+            del peep['pic']
             out.append({k: v for k, v in peep.items() if k in public})
 
     with open(json_file, 'w') as f:
-        json.dump(out, f)
+        json.dump(out, f, sort_keys=True, indent=2)
 
 
 if __name__ == '__main__':
     args = get_args()
     people = get_people(args.csv)
-    to_json(people, args.out)
+    to_json(people, args.out_json, args.out_pics_folder)
