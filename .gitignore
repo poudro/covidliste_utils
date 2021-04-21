@@ -1,0 +1,4 @@
+extract_list/config.py
+*.csv
+*.json
+*.jpg

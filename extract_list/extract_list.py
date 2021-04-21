@@ -12,6 +12,7 @@ from PIL import Image
 from resizeimage import resizeimage
 from resizeimage.imageexceptions import ImageSizeError
 from bs4 import BeautifulSoup
+import config
 
 logging.basicConfig(
     level=logging.INFO,
@@ -30,10 +31,11 @@ key_mappings = {
     'Nom 👀': 'lastname',
     'Identité 👀': 'identity',
     'Pseudo slack (si différent du nom complet)': 'nick',
-    'Adresse mail': 'email',
+    'Adresse mail (celle utilisée pour le slack)': 'email',
     'Téléphone portable (si numéro français, format français, sinon format international +32 XX...)': 'phone',
     "J'accepte d'être mentionné comme bénévole en public (site + twitter)": 'mention',
-    'Votre équipe dans Covidliste 👀': 'team',
+    'Votre équipe dans Covidliste': 'team',
+    "L'équipe que vous leadez (si vous êtes lead)": 'leading_team',
     'Code postal de résidence': 'res_postcode',
     'Ville de résidence': 'res_city',
     "Code postal d'origine": 'orig_postcode',
@@ -109,7 +111,7 @@ def get_people(filename):
 def handle_mention(peep):
     if peep['mention'] == 'Non' or peep['mention'] == '':
         for k, v in peep.items():
-            if k not in ["id", "team",]:
+            if k not in ["id", "team", "leading_team"]:
                 peep[k] = ""
         peep['anon'] = True
         return peep
@@ -166,12 +168,20 @@ def get_github_pic(peep):
 
 def get_twitter_pic(peep):
     handle = peep['twitter']
+    twitter_headers = default_headers;
+    twitter_headers["authorization"] = "Bearer " + config.TWITTER_API_BEARER_TOKEN
+    r = requests.get(f'https://api.twitter.com/1.1/users/show.json?screen_name={handle}', headers=twitter_headers)
+    if r.status_code == 200:
+        twitter_user = r.json()
+        if twitter_user and not twitter_user["default_profile_image"] and twitter_user["profile_image_url_https"]:
+            src = re.sub(r'_normal\.', '.', twitter_user["profile_image_url_https"])
+            return src
     # no way to retreive it by scrapping now, we must use https://developer.twitter.com/en/docs/twitter-api/v1/accounts-and-users/user-profile-images-and-banners
     return None
 
 
 def get_pic(peep, pics_folder):
-    priority = ['pic', 'github', 'twitter', 'linkedin']
+    priority = ['pic', 'twitter', 'linkedin', 'github']
     for field in priority:
         if peep[field]:
             pic_name = None
