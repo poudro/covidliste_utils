@@ -137,7 +137,10 @@ def handle_mention(csv_user):
         csv_user['anon'] = True
         return csv_user
     elif csv_user['mention'] == 'Oui : uniquement Prénom + 1ère lettre du Nom':
-        csv_user['lastname'] = csv_user['lastname'][0]
+        if csv_user['lastname']:
+            csv_user['lastname'] = csv_user['lastname'][0]
+        else:
+            logger.warning(f"{csv_user['firstname']} {csv_user['email']} {csv_user['slack_id']} -> missing lastname")
     elif csv_user['mention'] == 'Oui : uniquement Prénom':
         csv_user['lastname'] = ''
     elif csv_user['mention'] == 'Oui : uniquement Autre Pseudo':
@@ -303,7 +306,14 @@ def check_consistency(csv_users, slack_users):
         slack_id = csv_user['slack_id']
         email = csv_user['email']
         if csv_user['benevoles_channel']:
-            if not csv_user['mention'] or not csv_user['firstname'] or not csv_user['lastname']:
+            if not csv_user['fullname'] \
+                    or not csv_user['firstname'] \
+                    or not csv_user['lastname'] \
+                    or not csv_user['identity'] \
+                    or not csv_user['email'] \
+                    or not csv_user['phone'] \
+                    or not csv_user['mention'] \
+                    or not csv_user['team']:
                 logger.info(f"{email} ({full_name} #{slack_id}) has not filled the CSV")
                 slack_mention_text += f"<@{slack_id}> "
                 count_not_filled += 1
@@ -311,7 +321,7 @@ def check_consistency(csv_users, slack_users):
                 count_filled += 1
     logger.info(f"Slack mention text ready to copy/paste : {slack_mention_text}")
     logger.info(f"{count_filled} volunteers have filled the CSV")
-    logger.info(f"{count_not_filled} volunteers have not filled the CSV yet")
+    logger.info(f"{count_not_filled} volunteers have not filled (or badly filled) the CSV yet")
 
 
 if __name__ == '__main__':
