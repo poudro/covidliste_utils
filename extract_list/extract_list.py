@@ -284,7 +284,7 @@ def check_consistency(csv_users, slack_users):
             csv_user = csv_users[slack_email]
             if slack_user['benevoles_channel'] != csv_user['benevoles_channel']:
                 is_inconsistent = True
-                logger.warning(f"{email} ({full_name}) inconsistency between slack and CSV about channel"
+                logger.warning(f"{email} ({full_name}) inconsistency between slack and CSV about channel "
                                f"CSV:{csv_user['benevoles_channel']} Slack:{slack_user['benevoles_channel']}")
         else:
             # user from slack is NOT on CSV
