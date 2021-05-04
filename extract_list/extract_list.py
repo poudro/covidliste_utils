@@ -229,7 +229,7 @@ def download_and_crop_pic(csv_user, pic_url, pics_folder):
         return None
     image_name = "volunteer-" + csv_user['id']
     r = requests.get(pic_url, headers=default_headers)
-    if r.status_code >= 200 and r.status_code <= 209 and r.headers["content-type"] in pics_mimetypes:
+    if 200 <= r.status_code <= 209 and r.headers["content-type"] in pics_mimetypes:
         with Image.open(BytesIO(r.content)) as image:
             image = image.convert('RGB')
             try:
