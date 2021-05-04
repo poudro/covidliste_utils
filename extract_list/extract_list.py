@@ -66,6 +66,13 @@ default_headers = {
 }
 
 
+def is_filled(string):
+    if string and string.strip():
+        return True
+    else:
+        return False
+
+
 def get_args():
     parser = argparse.ArgumentParser()
 
@@ -130,7 +137,17 @@ def get_slack_users():
 
 
 def handle_mention(csv_user):
-    if csv_user['mention'] == 'Non' or csv_user['mention'] == '':
+    if not is_filled(csv_user['fullname']) \
+            or not is_filled(csv_user['firstname']) \
+            or not is_filled(csv_user['lastname']) \
+            or not is_filled(csv_user['email']) \
+            or not is_filled(csv_user['mention']):
+        for k, v in csv_user.items():
+            if k not in ["id", "team", "leading_team"]:
+                csv_user[k] = ""
+        csv_user['anon'] = True
+        return csv_user
+    elif csv_user['mention'] == 'Non' or csv_user['mention'] == '':
         for k, v in csv_user.items():
             if k not in ["id", "team", "leading_team"]:
                 csv_user[k] = ""
@@ -306,14 +323,14 @@ def check_consistency(csv_users, slack_users):
         slack_id = csv_user['slack_id']
         email = csv_user['email']
         if csv_user['benevoles_channel']:
-            if not csv_user['fullname'] \
-                    or not csv_user['firstname'] \
-                    or not csv_user['lastname'] \
-                    or not csv_user['identity'] \
-                    or not csv_user['email'] \
-                    or not csv_user['phone'] \
-                    or not csv_user['mention'] \
-                    or not csv_user['team']:
+            if not is_filled(csv_user['fullname']) \
+                    or not is_filled(csv_user['firstname']) \
+                    or not is_filled(csv_user['lastname']) \
+                    or not is_filled(csv_user['identity']) \
+                    or not is_filled(csv_user['email']) \
+                    or not is_filled(csv_user['phone']) \
+                    or not is_filled(csv_user['mention']) \
+                    or not is_filled(csv_user['team']):
                 logger.info(f"{email} ({full_name} #{slack_id}) has not filled the CSV")
                 slack_mention_text += f"<@{slack_id}> "
                 count_not_filled += 1
