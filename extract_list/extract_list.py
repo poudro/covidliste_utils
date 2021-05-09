@@ -417,6 +417,7 @@ def check_consistency(csv_users, slack_users):
         if slack_email in csv_users.keys():
             # user from slack is on CSV
             csv_user = csv_users[slack_email]
+            csv_user["slack_id"] = slack_user["id"]
             if not slack_user['is_benevole'] and not slack_user['is_invite_special'] and not slack_user["deleted"]:
                 if "is_invited_user" not in slack_user:
                     if slack_user['is_benevole'] == csv_user['is_benevole'] and slack_user['is_invite_special'] == \
