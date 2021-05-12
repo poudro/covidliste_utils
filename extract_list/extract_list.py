@@ -288,19 +288,24 @@ def get_github_pic(csv_user):
         if img:
             src = img[0].get('src')
             return src
+    else:
+        logger.warning(f"GitHub API Error for {handle} : {r.status_code}")
     return None
 
 
 def get_twitter_pic(csv_user):
     handle = csv_user['twitter']
-    twitter_headers = default_headers;
+    handle = re.sub(r'^@', '', handle)
+    twitter_headers = default_headers
     twitter_headers["authorization"] = "Bearer " + config.TWITTER_API_BEARER_TOKEN
-    r = requests.get(f'https://api.twitter.com/1.1/users/show.json?screen_name={handle}', headers=twitter_headers)
+    r = requests.get(f'https://api.twitter.com/2/users/by/username/{handle}?user.fields=profile_image_url', headers=twitter_headers)
     if r.status_code == 200:
         twitter_user = r.json()
-        if twitter_user and not twitter_user["default_profile_image"] and twitter_user["profile_image_url_https"]:
-            src = re.sub(r'_normal\.', '.', twitter_user["profile_image_url_https"])
+        if twitter_user and twitter_user["data"] and twitter_user['data']["profile_image_url"]:
+            src = re.sub(r'_normal\.', '.', twitter_user['data']["profile_image_url"])
             return src
+    else:
+        logger.warning(f"Twitter API Error for {handle} : {r.status_code}")
     return None
 
 
