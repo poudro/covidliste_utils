@@ -115,6 +115,7 @@ def get_csv_users():
                 csv_user['id'] = person_id
                 csv_user['is_benevole'] = csv_user['type'] == 'Bénévole'
                 csv_user['is_invite_special'] = csv_user['type'] == 'Invité spécial'
+                csv_user['is_ancien_benevole'] = csv_user['type'] == 'Ancien bénévole'
                 if "email" in csv_user and csv_user["email"]:
                     csv_users[csv_user["email"]] = csv_user
 
@@ -133,6 +134,7 @@ def get_slack_users():
 
     channels = get_slack_channels()
     benevoles_channel_members = channels[config.BENEVOLES_SLACK_CHANNEL]["members"]
+    benevoles_anciens_benevoles_channel_members = channels[config.BENEVOLES_ANCIENS_BENEVOLES_SLACK_CHANNEL]["members"]
 
     members = {}
     for user in users:
@@ -142,11 +144,14 @@ def get_slack_users():
                 user["billing_active"] = users_billable_info[user["id"]]["billing_active"]
 
             user["is_benevole"] = user["id"] in benevoles_channel_members
+            user["is_ancien_benevole"] = False
             user['is_invite_special'] = False
             if "is_ultra_restricted" in user and user['is_ultra_restricted']:
-                user['is_invite_special'] = True
+                user['is_invite_special'] = user["id"] not in benevoles_anciens_benevoles_channel_members
+                user["is_ancien_benevole"] = user["id"] in benevoles_anciens_benevoles_channel_members
             if "is_restricted" in user and user['is_restricted']:
-                user['is_invite_special'] = True
+                user['is_invite_special'] = user["id"] not in benevoles_anciens_benevoles_channel_members
+                user["is_ancien_benevole"] = user["id"] in benevoles_anciens_benevoles_channel_members
 
             user["email"] = user["profile"]["email"]
             user_all_channels = {}
@@ -158,7 +163,7 @@ def get_slack_users():
                 if user["id"] in channel["members"]:
                     user_all_channels[channel_id] = channel
                 if channel["is_private"]:  # private channel
-                    if channel["name"].startswith("bénévoles_"):
+                    if channel["name"].startswith("bénévoles-"):
                         if user["id"] in channel["members"]:
                             user_benevoles_channels[channel_id] = channel
                         else:
@@ -379,8 +384,15 @@ def check_consistency(csv_users, slack_users):
 
             if slack_user['is_invite_special'] != csv_user['is_invite_special']:
                 is_inconsistent = True
-                logger.warning(f"{email} ({full_name}) inconsistency between slack and CSV about person type invité "
-                               f"spécial : CSV:{csv_user['is_invite_special']} Slack:{slack_user['is_invite_special']}")
+                logger.warning(f"{email} ({full_name}) inconsistency between slack and CSV about person type "
+                               f"invité spécial : "
+                               f"CSV:{csv_user['is_invite_special']} Slack:{slack_user['is_invite_special']}")
+
+            if slack_user['is_ancien_benevole'] != csv_user['is_ancien_benevole']:
+                is_inconsistent = True
+                logger.warning(f"{email} ({full_name}) inconsistency between slack and CSV about person type "
+                               f"ancien bénévole : "
+                               f"CSV:{csv_user['is_ancien_benevole']} Slack:{slack_user['is_ancien_benevole']}")
         else:
             # user from slack is NOT on CSV
             if slack_user["is_benevole"]:
@@ -396,6 +408,14 @@ def check_consistency(csv_users, slack_users):
                 channels_names = ", ".join([v["name"] for k, v in slack_user["missing_benevoles_channels"].items()])
                 logger.warning(
                     f"{email} ({full_name}) is volunteer on slack but is NOT on bénévoles channels : {channels_names}")
+        elif slack_user['is_ancien_benevole']:
+            if not (set(slack_user["all_channels"].keys())).issubset(
+                    set(config.ALLOWED_SLACK_CHANNELS_FOR_ANCIENS_BENEVOLES)):
+                is_inconsistent = True
+                channels_names = ", ".join(
+                    [v["name"] + " (" + v["id"] + ")" for k, v in slack_user["all_channels"].items()])
+                logger.warning(f"{email} ({full_name}) is ancien bénévole BUT on NOT ALLOWED CHANNELS. "
+                               f"Person is on channels : {channels_names}")
         elif slack_user['is_invite_special']:
             if not (set(slack_user["all_channels"].keys())).issubset(
                     set(config.ALLOWED_SLACK_CHANNELS_FOR_INVITE_SPECIAL)):
@@ -418,10 +438,14 @@ def check_consistency(csv_users, slack_users):
             # user from slack is on CSV
             csv_user = csv_users[slack_email]
             csv_user["slack_id"] = slack_user["id"]
-            if not slack_user['is_benevole'] and not slack_user['is_invite_special'] and not slack_user["deleted"]:
+            if not slack_user['is_benevole'] \
+                    and not slack_user['is_invite_special'] \
+                    and not slack_user['is_ancien_benevole'] \
+                    and not slack_user["deleted"]:
                 if "is_invited_user" not in slack_user:
-                    if slack_user['is_benevole'] == csv_user['is_benevole'] and slack_user['is_invite_special'] == \
-                            csv_user['is_invite_special']:
+                    if slack_user['is_benevole'] == csv_user['is_benevole'] \
+                            and slack_user['is_invite_special'] == csv_user['is_invite_special'] \
+                            and slack_user['is_ancien_benevole'] == csv_user['is_ancien_benevole']:
                         if len(slack_user["private_channels"]) <= 0:
                             logger.info(f"[INFO] {email} ({full_name}) is not benevole nor invite special")
             if slack_user['is_benevole'] and not slack_user['billing_active'] and not slack_user["deleted"]:
