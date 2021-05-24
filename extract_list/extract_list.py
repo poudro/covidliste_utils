@@ -435,6 +435,11 @@ def check_consistency(csv_users, slack_users):
                 channels_names = ", ".join([v["name"] for k, v in slack_user["private_channels"].items()])
                 logger.warning(
                     f"{email} ({full_name}) is NOT volunteer on slack but is on private channels : {channels_names}")
+            if len(slack_user["benevoles_channels"]) > 0:
+                is_inconsistent = True
+                channels_names = ", ".join([v["name"] for k, v in slack_user["benevoles_channels"].items()])
+                logger.warning(
+                    f"{email} ({full_name}) is NOT volunteer on slack but is on bénévoles channels : {channels_names}")
 
     for slack_email, slack_user in slack_users.items():
         full_name = slack_user["profile"]["real_name"]
