@@ -93,7 +93,28 @@ def get_args():
     return args
 
 
+def get_website_users():
+    logger.info(f"Loading website users...")
+    if not config.VOLUNTEERS_WEBSITE_API_URL:
+        raise Exception('Missing Website API URL')
+    if not config.VOLUNTEERS_WEBSITE_API_TOKEN:
+        raise Exception('Missing Website API Token')
+    website_headers = default_headers
+    website_headers["authorization"] = "Bearer " + config.VOLUNTEERS_WEBSITE_API_TOKEN
+    response = requests.get(config.VOLUNTEERS_WEBSITE_API_URL, headers=website_headers)
+    response.raise_for_status()
+    if response.status_code == 200:
+        website_data = response.json()
+        if website_data and website_data["power_users"]:
+            return {v["email"]: v for v in website_data["power_users"]}
+        else:
+            raise Exception(f"Website API Error missing power_users : {response.status_code}")
+    else:
+        raise Exception(f"Website API Error for : {response.status_code}")
+
+
 def get_csv_users():
+    logger.info(f"Loading CSV users...")
     if not config.VOLUNTEERS_CSV_URL:
         raise Exception('Missing CSV')
     response = requests.get(config.VOLUNTEERS_CSV_URL, headers=default_headers)
@@ -298,7 +319,8 @@ def get_twitter_pic(csv_user):
     handle = re.sub(r'^@', '', handle)
     twitter_headers = default_headers
     twitter_headers["authorization"] = "Bearer " + config.TWITTER_API_BEARER_TOKEN
-    r = requests.get(f'https://api.twitter.com/2/users/by/username/{handle}?user.fields=profile_image_url', headers=twitter_headers)
+    r = requests.get(f'https://api.twitter.com/2/users/by/username/{handle}?user.fields=profile_image_url',
+                     headers=twitter_headers)
     if r.status_code == 200:
         twitter_user = r.json()
         if twitter_user and twitter_user["data"] and twitter_user['data']["profile_image_url"]:
@@ -365,7 +387,7 @@ def to_json(people, json_file, pics_folder):
         json.dump(out, f, sort_keys=True, indent=2)
 
 
-def check_consistency(csv_users, slack_users):
+def check_consistency(csv_users, slack_users, website_users):
     is_inconsistent = False
     for csv_email, csv_user in csv_users.items():
         full_name = csv_user['fullname']
@@ -441,6 +463,22 @@ def check_consistency(csv_users, slack_users):
                 logger.warning(
                     f"{email} ({full_name}) is NOT volunteer on slack but is on bénévoles channels : {channels_names}")
 
+    for website_email, website_user in website_users.items():
+        full_name = website_user['fullname']
+        roles = website_user['roles']
+        roles_names = ", ".join(roles)
+        email = website_email
+        if website_email not in csv_users.keys():
+            # user from website is NOT on csv
+            is_inconsistent = True
+            logger.warning(f"{email} ({full_name}) has roles on the website but do not exist on csv : {roles_names}")
+        else:
+            csv_user = csv_users[website_email]
+            if not csv_user['is_benevole']:
+                if "is_invited_user" not in csv_user:
+                    is_inconsistent = True
+                    logger.warning(f"{email} ({full_name}) has role on the website but is not benevole on csv : {roles_names}")
+
     for slack_email, slack_user in slack_users.items():
         full_name = slack_user["profile"]["real_name"]
         email = slack_email
@@ -505,11 +543,14 @@ if __name__ == '__main__':
     csv_users = get_csv_users()
     if not csv_users:
         raise Exception("Cannot load data from CSV")
+    website_users = get_website_users()
+    if not website_users:
+        raise Exception("Cannot load data from website")
     slack_users = get_slack_users()
     if not slack_users:
         raise Exception("Cannot load data from slack")
 
-    check_consistency(csv_users, slack_users)
+    check_consistency(csv_users, slack_users, website_users)
 
     csv_users_filtered_list = (csv_user for csv_user in csv_users.values() if csv_user['is_benevole'])
 
