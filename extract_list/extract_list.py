@@ -106,7 +106,11 @@ def get_website_users():
     if response.status_code == 200:
         website_data = response.json()
         if website_data and website_data["power_users"]:
-            return {v["email"]: v for v in website_data["power_users"]}
+            website_users = {}
+            for website_user in website_data["power_users"]:
+                website_user["email"] = website_user["email"].lower()
+                website_users[website_user["email"]] = website_user
+            return website_users
         else:
             raise Exception(f"Website API Error missing power_users : {response.status_code}")
     else:
@@ -131,6 +135,7 @@ def get_csv_users():
                 break
             elif headers:
                 csv_user = {key_mappings[k]: v for k, v in zip(headers, row) if k}
+                csv_user["email"] = csv_user["email"].lower()
                 person_id = hashlib.sha256(csv_user['email'].encode("utf-8")).hexdigest()
                 person_id = hashlib.md5(person_id.encode("utf-8")).hexdigest()
                 csv_user['id'] = person_id
@@ -175,6 +180,7 @@ def get_slack_users():
                 user["is_ancien_benevole"] = user["id"] in benevoles_anciens_benevoles_channel_members
 
             user["email"] = user["profile"]["email"]
+            user["email"] = user["email"].lower()
             user_all_channels = {}
             user_public_channels = {}
             user_private_channels = {}
@@ -200,7 +206,7 @@ def get_slack_users():
             user["private_channels"] = user_private_channels
             user["benevoles_channels"] = user_benevoles_channels
             user["missing_benevoles_channels"] = user_missing_benevoles_channels
-            members[user["profile"]["email"]] = user
+            members[user["email"]] = user
     return members
 
 
