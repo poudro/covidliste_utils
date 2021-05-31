@@ -117,6 +117,135 @@ def get_website_users():
         raise Exception(f"Website API Error for : {response.status_code}")
 
 
+def get_front_users():
+    logger.info(f"Loading Front users...")
+    if not config.FRONT_API_BEARER_TOKEN:
+        raise Exception('Missing Front API Token')
+    front_headers = default_headers
+    front_headers["authorization"] = "Bearer " + config.FRONT_API_BEARER_TOKEN
+    response = requests.get("https://api2.frontapp.com/teammates", headers=front_headers)
+    response.raise_for_status()
+    if response.status_code == 200:
+        front_data = response.json()
+        if front_data and front_data["_results"]:
+            front_users = {}
+            for front_user in front_data["_results"]:
+                front_user["email"] = front_user["email"].lower()
+                front_users[front_user["email"]] = front_user
+            return front_users
+        else:
+            raise Exception(f"Front API Error missing _results : {response.status_code}")
+    else:
+        raise Exception(f"Front API Error for : {response.status_code}")
+
+
+def get_aircall_users():
+    logger.info(f"Loading Aircall users...")
+    if not config.AIRCALL_API_USER:
+        raise Exception('Missing Aircall API User')
+    if not config.AIRCALL_API_SECRET:
+        raise Exception('Missing Aircall API Secret')
+    aircall_headers = default_headers
+    response = requests.get("https://api.aircall.io/v1/users", auth=(config.AIRCALL_API_USER, config.AIRCALL_API_SECRET), headers=aircall_headers)
+    response.raise_for_status()
+    if response.status_code == 200:
+        aircall_data = response.json()
+        if aircall_data and aircall_data["users"]:
+            aircall_users = {}
+            for aircall_user in aircall_data["users"]:
+                aircall_user["email"] = aircall_user["email"].lower()
+                aircall_users[aircall_user["email"]] = aircall_user
+            return aircall_users
+        else:
+            raise Exception(f"Aircall API Error missing users : {response.status_code}")
+    else:
+        raise Exception(f"Aircall API Error for : {response.status_code}")
+
+def get_slite_users_paginated(after = None):
+    logger.info(f"Loading Slite users starting from {after}...")
+    if not config.SLITE_API_URL:
+        raise Exception('Missing Slite API URL')
+    if not config.SLITE_API_BEARER_TOKEN:
+        raise Exception('Missing Slite API Token')
+    slite_headers = default_headers
+    slite_headers["authorization"] = "Bearer " + config.SLITE_API_BEARER_TOKEN
+    slite_headers["Content-Type"] = "application/json"
+    query = """
+        query showOrganizationMembersList($pagination: PaginationInput!, $includeArchived: Boolean!, $queryFilter: String, $order: UserOrder) {
+          showMyOrganizationUsers(
+            input: {pagination: $pagination, includeArchived: $includeArchived, queryFilter: $queryFilter, inviteFilter: EXCLUDE_PENDING_INVITES, order: $order}
+          ) {
+            totalCount
+            edges {
+              cursor
+              node {
+                ...userSettingsAttrs
+                __typename
+              }
+              __typename
+            }
+            pageInfo {
+              hasNextPage
+              endCursor
+              __typename
+            }
+            __typename
+          }
+        }
+        
+        fragment userSettingsAttrs on User {
+          id
+          __typename
+          createdAt
+          email
+          displayName
+          organizationRole
+        }
+    """
+    payload = {
+        "operationName": "showOrganizationMembersList",
+        "variables": {
+            "order": {
+                "field": "displayName",
+                "direction": "ASC"
+            },
+            "queryFilter": "",
+            "includeArchived": False,
+            "pagination": {
+                "first": 15,
+                "after": after
+            }
+        },
+        "query": query
+    }
+    response = requests.post(config.SLITE_API_URL, json=payload, headers=slite_headers)
+    response.raise_for_status()
+    if response.status_code == 200:
+        slite_data = response.json()
+        if slite_data and slite_data["data"] \
+                and slite_data["data"]["showMyOrganizationUsers"]:
+            return slite_data
+        else:
+            raise Exception(f"Slite API Error missing data showMyOrganizationUsers : {response.status_code}")
+    else:
+        raise Exception(f"Slite API Error for : {response.status_code}")
+
+def get_slite_users():
+    slite_datas = []
+    slite_data = get_slite_users_paginated()
+    slite_datas.append(slite_data)
+    while len(slite_data["data"]["showMyOrganizationUsers"]["edges"]) > 0:
+        slite_data = get_slite_users_paginated(slite_data["data"]["showMyOrganizationUsers"]["edges"][-1]["cursor"])
+        slite_datas.append(slite_data)
+
+    slite_users = {}
+    for slite_data in slite_datas:
+        for slite_user in slite_data["data"]["showMyOrganizationUsers"]["edges"]:
+            slite_user["node"]["email"] = slite_user["node"]["email"].lower()
+            slite_users[slite_user["node"]["email"]] = slite_user["node"]
+    return slite_users
+
+
 def get_csv_users():
     logger.info(f"Loading CSV users...")
     if not config.VOLUNTEERS_CSV_URL:
@@ -393,7 +522,7 @@ def to_json(people, json_file, pics_folder):
         json.dump(out, f, sort_keys=True, indent=2)
 
 
-def check_consistency(csv_users, slack_users, website_users):
+def check_consistency(csv_users, slack_users, website_users, front_users, aircall_users, slite_users):
     is_inconsistent = False
     for csv_email, csv_user in csv_users.items():
         full_name = csv_user['fullname']
@@ -485,6 +614,52 @@ def check_consistency(csv_users, slack_users, website_users):
                     is_inconsistent = True
                     logger.warning(f"{email} ({full_name}) has role on the website but is not benevole on csv : {roles_names}")
 
+    for front_email, front_user in front_users.items():
+        full_name = front_user['first_name']+" "+front_user['last_name']
+        role = "admin" if front_user['is_admin'] else "user"
+        email = front_email
+        if front_email not in csv_users.keys():
+            # user from front is NOT on csv
+            is_inconsistent = True
+            logger.warning(f"{email} ({full_name}) has Front access but do not exist on csv : {role}")
+        else:
+            csv_user = csv_users[front_email]
+            if not csv_user['is_benevole']:
+                if "is_invited_user" not in csv_user:
+                    is_inconsistent = True
+                    logger.warning(f"{email} ({full_name}) has Front access but is not benevole on csv : {role}")
+
+    for aircall_email, aircall_user in aircall_users.items():
+        full_name = aircall_user['name']
+        email = aircall_email
+        if aircall_email not in csv_users.keys():
+            if email == config.ADMINS_EMAIL:
+                continue
+            # user from aircall is NOT on csv
+            is_inconsistent = True
+            logger.warning(f"{email} ({full_name}) has Aircall access but do not exist on csv")
+        else:
+            csv_user = csv_users[aircall_email]
+            if not csv_user['is_benevole']:
+                if "is_invited_user" not in csv_user:
+                    is_inconsistent = True
+                    logger.warning(f"{email} ({full_name}) has Aircall access but is not benevole on csv")
+
+    for slite_email, slite_user in slite_users.items():
+        full_name = slite_user['displayName']
+        role = slite_user['organizationRole']
+        email = slite_email
+        if slite_email not in csv_users.keys():
+            # user from slite is NOT on csv
+            is_inconsistent = True
+            logger.warning(f"{email} ({full_name}) has Slite access but do not exist on csv : {role}")
+        else:
+            csv_user = csv_users[slite_email]
+            if not csv_user['is_benevole']:
+                if "is_invited_user" not in csv_user:
+                    is_inconsistent = True
+                    logger.warning(f"{email} ({full_name}) has Slite access but is not benevole on csv : {role}")
+
     for slack_email, slack_user in slack_users.items():
         full_name = slack_user["profile"]["real_name"]
         email = slack_email
@@ -552,11 +727,20 @@ if __name__ == '__main__':
     website_users = get_website_users()
     if not website_users:
         raise Exception("Cannot load data from website")
+    front_users = get_front_users()
+    if not front_users:
+        raise Exception("Cannot load data from Front")
+    aircall_users = get_aircall_users()
+    if not aircall_users:
+        raise Exception("Cannot load data from Aircall")
+    slite_users = get_slite_users()
+    if not slite_users:
+        raise Exception("Cannot load data from Slite")
     slack_users = get_slack_users()
     if not slack_users:
         raise Exception("Cannot load data from slack")
 
-    check_consistency(csv_users, slack_users, website_users)
+    check_consistency(csv_users, slack_users, website_users, front_users, aircall_users, slite_users)
 
     csv_users_filtered_list = (csv_user for csv_user in csv_users.values() if csv_user['is_benevole'])
 
