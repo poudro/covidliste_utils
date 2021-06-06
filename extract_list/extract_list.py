@@ -55,7 +55,7 @@ key_mappings = {
     "Commentaire autre, si vous ne voulez pas qu'on publie un truc, si vous avez autre chose à dire": 'comment',
 }
 
-public = set([x[1] for x in filter(lambda x: '👀' in x[0], key_mappings.items())] + ['picture', 'anon', 'id'])
+public = set([x[1] for x in filter(lambda x: '👀' in x[0], key_mappings.items())] + ['picture', 'anon', 'old', 'id'])
 
 default_headers = {
     'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.128 Safari/537.36',
@@ -375,19 +375,27 @@ def get_slack_user_presence(user):
 
 
 def handle_mention(csv_user):
-    if not is_filled(csv_user['fullname']) \
+    csv_user['old'] = False
+    if csv_user['is_ancien_benevole']:
+        for k, v in csv_user.items():
+            if k not in ["id", "team", "leading_team"]:
+                csv_user[k] = ""
+        csv_user['old'] = True
+        csv_user['anon'] = True
+        return csv_user
+    elif not is_filled(csv_user['fullname']) \
             or not is_filled(csv_user['firstname']) \
             or not is_filled(csv_user['lastname']) \
             or not is_filled(csv_user['email']) \
             or not is_filled(csv_user['mention']):
         for k, v in csv_user.items():
-            if k not in ["id", "team", "leading_team"]:
+            if k not in ["id", "team", "leading_team", "old"]:
                 csv_user[k] = ""
         csv_user['anon'] = True
         return csv_user
     elif csv_user['mention'] == 'Non' or csv_user['mention'] == '':
         for k, v in csv_user.items():
-            if k not in ["id", "team", "leading_team"]:
+            if k not in ["id", "team", "leading_team", "old"]:
                 csv_user[k] = ""
         csv_user['anon'] = True
         return csv_user
@@ -742,6 +750,6 @@ if __name__ == '__main__':
 
     check_consistency(csv_users, slack_users, website_users, front_users, aircall_users, slite_users)
 
-    csv_users_filtered_list = (csv_user for csv_user in csv_users.values() if csv_user['is_benevole'])
+    csv_users_filtered_list = (csv_user for csv_user in csv_users.values() if csv_user['is_benevole'] or csv_user['is_ancien_benevole'])
 
     to_json(csv_users_filtered_list, args.out_json, args.out_pics_folder)
